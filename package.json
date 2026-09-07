@@ -1,0 +1,14 @@
+{
+  "name": "finance-analytics",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Fund and global equity analytics on Cloudflare",
+  "workspaces": [
+    "apps/web",
+    "apps/realtime"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev -w finance-analytics-web",
+    "dev:realtime": "npm run dev -w finance-analytics-realtime"
+  }
+}
