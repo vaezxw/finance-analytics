@@ -46,6 +46,8 @@ migrations/     # D1 schema
 
 各应用自带独立 `package-lock.json`，不要用仓库根目录作为 Root directory。
 
+`apps/api` 是 **Hono/TypeScript** Worker，目录里不要放 `uv.lock` / `pyproject.toml`，否则 Cloudflare Builds 会误跑 `uv sync` 导致失败。
+
 ## 免责声明
 
 行情与展示内容仅供学习研究，不构成投资建议。
