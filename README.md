@@ -8,6 +8,7 @@
 |------|-----|
 | Web | https://finance-analytics-web.2148983461.workers.dev |
 | 自选盯盘 | https://finance-analytics-web.2148983461.workers.dev/watchlist |
+| 预测 | https://finance-analytics-web.2148983461.workers.dev/predictions |
 | API | https://finance-analytics-api.2148983461.workers.dev |
 | Realtime WS | `wss://finance-analytics-realtime.2148983461.workers.dev/ws?room=demo` |
 

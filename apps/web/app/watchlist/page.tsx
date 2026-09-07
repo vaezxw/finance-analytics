@@ -148,6 +148,9 @@ export default function WatchlistPage() {
             看板
           </Link>
           <span style={{ opacity: 0.5 }}>自选盯盘</span>
+          <Link href="/predictions" style={{ color: "#9fd0b3" }}>
+            预测
+          </Link>
         </nav>
 
         <h1 style={{ fontSize: "clamp(1.8rem, 4vw, 2.6rem)", margin: "0 0 0.5rem" }}>

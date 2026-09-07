@@ -245,6 +245,70 @@ app.get("/api/v1/quotes", async (c) => {
   return c.json({ quotes });
 });
 
+app.get("/api/v1/predictions", async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT id, symbol, as_of, horizon, score, direction, confidence, factors_json, model_version, created_at
+     FROM predictions
+     WHERE as_of = (SELECT MAX(as_of) FROM predictions)
+     ORDER BY score DESC
+     LIMIT 50`,
+  ).all();
+
+  const items = (rows.results ?? []).map((row: any) => ({
+    ...row,
+    factors: safeJson(row.factors_json),
+  }));
+  return c.json({
+    items,
+    disclaimer: "规则因子打分仅供研究，不构成投资建议。",
+  });
+});
+
+app.get("/api/v1/predictions/:symbol", async (c) => {
+  const symbol = c.req.param("symbol").toUpperCase();
+  const row = await c.env.DB.prepare(
+    `SELECT id, symbol, as_of, horizon, score, direction, confidence, factors_json, model_version, created_at
+     FROM predictions
+     WHERE symbol = ?
+     ORDER BY as_of DESC
+     LIMIT 1`,
+  )
+    .bind(symbol)
+    .first<any>();
+
+  if (!row) {
+    const generated = await runPredictionForSymbol(c.env, symbol);
+    if (!generated) return c.json({ error: "no_data", symbol }, 404);
+    return c.json({
+      item: generated,
+      disclaimer: "规则因子打分仅供研究，不构成投资建议。",
+    });
+  }
+
+  return c.json({
+    item: { ...row, factors: safeJson(row.factors_json) },
+    disclaimer: "规则因子打分仅供研究，不构成投资建议。",
+  });
+});
+
+app.post("/api/v1/predictions/run", async (c) => {
+  const body = await c.req.json<{ symbols?: string[] }>().catch(() => ({}));
+  const symbols =
+    body.symbols?.map((s) => s.toUpperCase()) ??
+    SEED_INSTRUMENTS.map((i) => i.symbol);
+  const items = [];
+  for (const symbol of symbols.slice(0, 20)) {
+    const item = await runPredictionForSymbol(c.env, symbol);
+    if (item) items.push(item);
+  }
+  return c.json({
+    ok: true,
+    count: items.length,
+    items,
+    disclaimer: "规则因子打分仅供研究，不构成投资建议。",
+  });
+});
+
 export default {
   fetch: app.fetch,
   async scheduled(
@@ -275,7 +339,7 @@ export default {
       }
     }
 
-    // nightly deeper refresh for OHLCV
+    // nightly deeper refresh for OHLCV + predictions
     if (cron === "0 2 * * *") {
       for (const symbol of symbols) {
         const candles = await fetchYahooDaily(symbol, "6mo");
@@ -284,6 +348,7 @@ export default {
             expirationTtl: 60 * 60 * 12,
           });
         }
+        await runPredictionForSymbol(env, symbol);
       }
     }
   },
@@ -311,6 +376,127 @@ async function seedInstruments(db: D1Database) {
       .bind(item.id, item.symbol, item.name, item.asset_class, item.market, item.currency)
       .run();
   }
+}
+
+function safeJson(raw: string) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+async function getCandlesCached(env: Env, symbol: string, range = "6mo") {
+  const cached = await env.QUOTES.get(`ohlcv:${symbol}:${range}`, "json");
+  if (Array.isArray(cached) && cached.length) return cached as Candle[];
+  const candles = await fetchYahooDaily(symbol, range);
+  if (candles.length) {
+    await env.QUOTES.put(`ohlcv:${symbol}:${range}`, JSON.stringify(candles), {
+      expirationTtl: 60 * 60 * 6,
+    });
+  }
+  return candles;
+}
+
+function computeFactors(candles: Candle[]) {
+  const closes = candles.map((c) => c.close);
+  const n = closes.length;
+  if (n < 25) return null;
+
+  const last = closes[n - 1];
+  const ret5 = (last - closes[n - 6]) / closes[n - 6];
+  const ret20 = (last - closes[n - 21]) / closes[n - 21];
+  const window = closes.slice(-21);
+  const mean = window.reduce((a, b) => a + b, 0) / window.length;
+  const variance =
+    window.reduce((a, b) => a + (b - mean) * (b - mean), 0) / window.length;
+  const vol20 = Math.sqrt(variance) / mean;
+  const ma20 = mean;
+  const distMa20 = (last - ma20) / ma20;
+
+  // simple RSI(14)
+  let gains = 0;
+  let losses = 0;
+  for (let i = n - 14; i < n; i++) {
+    const d = closes[i] - closes[i - 1];
+    if (d >= 0) gains += d;
+    else losses -= d;
+  }
+  const rs = losses === 0 ? 100 : gains / losses;
+  const rsi14 = 100 - 100 / (1 + rs);
+
+  const momentumScore = clamp(ret5 * 8 + ret20 * 4, -1, 1);
+  const trendScore = clamp(distMa20 * 10, -1, 1);
+  const rsiScore = clamp((rsi14 - 50) / 50, -1, 1);
+  const volPenalty = clamp(vol20 * 8, 0, 0.4);
+
+  const score = clamp(
+    0.45 * momentumScore + 0.35 * trendScore + 0.2 * rsiScore - volPenalty * 0.5,
+    -1,
+    1,
+  );
+
+  let direction: "up" | "down" | "neutral" = "neutral";
+  if (score >= 0.15) direction = "up";
+  else if (score <= -0.15) direction = "down";
+
+  const confidence = clamp(Math.abs(score) * 0.85 + (1 - volPenalty) * 0.15, 0, 1);
+
+  return {
+    score: Number(score.toFixed(4)),
+    direction,
+    confidence: Number(confidence.toFixed(4)),
+    factors: {
+      ret5: Number(ret5.toFixed(4)),
+      ret20: Number(ret20.toFixed(4)),
+      vol20: Number(vol20.toFixed(4)),
+      distMa20: Number(distMa20.toFixed(4)),
+      rsi14: Number(rsi14.toFixed(2)),
+      lastClose: Number(last.toFixed(4)),
+    },
+  };
+}
+
+async function runPredictionForSymbol(env: Env, symbol: string) {
+  const candles = await getCandlesCached(env, symbol, "6mo");
+  const computed = computeFactors(candles);
+  if (!computed) return null;
+
+  const asOf = candles[candles.length - 1]?.date ?? new Date().toISOString().slice(0, 10);
+  const id = `${symbol}:${asOf}:5d:rules-v1`;
+  const factorsJson = JSON.stringify(computed.factors);
+
+  await env.DB.prepare(
+    `INSERT OR REPLACE INTO predictions
+      (id, symbol, as_of, horizon, score, direction, confidence, factors_json, model_version)
+     VALUES (?, ?, ?, '5d', ?, ?, ?, ?, 'rules-v1')`,
+  )
+    .bind(
+      id,
+      symbol,
+      asOf,
+      computed.score,
+      computed.direction,
+      computed.confidence,
+      factorsJson,
+    )
+    .run();
+
+  return {
+    id,
+    symbol,
+    as_of: asOf,
+    horizon: "5d",
+    score: computed.score,
+    direction: computed.direction,
+    confidence: computed.confidence,
+    factors: computed.factors,
+    model_version: "rules-v1",
+  };
 }
 
 type Candle = {

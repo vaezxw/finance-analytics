@@ -135,6 +135,9 @@ export default function HomePage() {
           <a href="/watchlist" style={{ color: "#9fd0b3" }}>
             自选盯盘
           </a>
+          <a href="/predictions" style={{ color: "#9fd0b3" }}>
+            预测
+          </a>
         </nav>
         <h1 style={{ fontSize: "clamp(2rem, 5vw, 3rem)", margin: "0.4rem 0 0.6rem" }}>
           基金与全球股票看板
