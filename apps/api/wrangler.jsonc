@@ -1,7 +1,29 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "finance-analytics-api",
-  "main": "src/main.py",
+  "main": "src/index.ts",
   "compatibility_date": "2026-09-07",
-  "compatibility_flags": ["python_workers"]
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "finance-analytics",
+      "database_id": "7ca636c9-36f7-45cb-900d-fdf91b79047d"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "QUOTES",
+      "id": "32842d0978954a07b84f7028c53a8464"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "MARKET_DATA",
+      "bucket_name": "finance-analytics-market-data"
+    }
+  ],
+  "triggers": {
+    "crons": ["0 2 * * *"]
+  }
 }

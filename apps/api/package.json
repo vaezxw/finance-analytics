@@ -1,0 +1,20 @@
+{
+  "name": "finance-analytics-api",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 execute finance-analytics --local --file=../../migrations/0001_init.sql",
+    "db:migrate:remote": "wrangler d1 execute finance-analytics --remote --file=../../migrations/0001_init.sql"
+  },
+  "dependencies": {
+    "hono": "^4.9.6"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250905.0",
+    "typescript": "^5.9.2",
+    "wrangler": "^4.86.0"
+  }
+}
