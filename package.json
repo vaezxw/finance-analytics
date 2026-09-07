@@ -3,17 +3,15 @@
   "private": true,
   "version": "0.1.0",
   "description": "Fund and global equity analytics on Cloudflare",
-  "workspaces": [
-    "apps/web",
-    "apps/api",
-    "apps/realtime"
-  ],
   "scripts": {
-    "dev:web": "npm run dev -w finance-analytics-web",
-    "dev:api": "npm run dev -w finance-analytics-api",
-    "dev:realtime": "npm run dev -w finance-analytics-realtime",
-    "deploy:web": "npm run deploy -w finance-analytics-web",
-    "deploy:api": "npm run deploy -w finance-analytics-api",
-    "deploy:realtime": "npm run deploy -w finance-analytics-realtime"
+    "dev:web": "npm --prefix apps/web run dev",
+    "dev:api": "npm --prefix apps/api run dev",
+    "dev:realtime": "npm --prefix apps/realtime run dev",
+    "deploy:web": "npm --prefix apps/web run deploy",
+    "deploy:api": "npm --prefix apps/api run deploy",
+    "deploy:realtime": "npm --prefix apps/realtime run deploy",
+    "ci:web": "npm --prefix apps/web ci",
+    "ci:api": "npm --prefix apps/api ci",
+    "ci:realtime": "npm --prefix apps/realtime ci"
   }
 }

@@ -34,15 +34,17 @@ apps/compute/   # Container 占位（后续因子/ML）
 migrations/     # D1 schema
 ```
 
-## 本地开发
+## Cloudflare Workers Builds（Git 自动部署）
 
-需 Node.js 22+（当前 Wrangler 要求）。
+每个 Worker **单独连接**仓库，根目录与命令如下（Cloudflare 会先自动执行 `npm ci`，构建命令里不必再写 `npm install`）：
 
-```bash
-npm install
-npm run dev:web
-npm run dev:api
-```
+| Worker | 根目录 | 构建命令 | 部署命令 |
+|--------|--------|----------|----------|
+| finance-analytics-web | `apps/web` | `npx opennextjs-cloudflare build` | `npx opennextjs-cloudflare deploy` |
+| finance-analytics-api | `apps/api` | _(留空)_ | `npx wrangler deploy` |
+| finance-analytics-realtime | `apps/realtime` | _(留空)_ | `npx wrangler deploy` |
+
+各应用自带独立 `package-lock.json`，不要用仓库根目录作为 Root directory。
 
 ## 免责声明
 
