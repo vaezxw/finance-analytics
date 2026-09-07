@@ -1,6 +1,16 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Context } from "hono";
+import {
+  INDEX_DEFS,
+  buildSentimentSummary,
+  fetchFlashNews,
+  fetchHotBoards,
+  fetchIndexIntraday,
+  fetchIndexQuotes,
+  fetchMarketBreadth,
+  fetchSectorFlowSeries,
+} from "./eastmoney";
 
 type Env = {
   DB: D1Database;
@@ -24,6 +34,113 @@ app.use("*", cors());
 app.get("/health", (c) =>
   c.json({ ok: true, service: "finance-analytics-api" }),
 );
+
+app.get("/api/v1/cn/dashboard", async (c) => {
+  try {
+    const cacheKey = "cn:dashboard:v1";
+    const cached = await c.env.QUOTES.get(cacheKey, "json");
+    if (cached) return c.json({ ...cached, source: "kv" });
+
+    const settled = await Promise.allSettled([
+      fetchIndexQuotes(),
+      fetchMarketBreadth(),
+      fetchHotBoards(5),
+      fetchSectorFlowSeries(),
+      fetchFlashNews(18),
+    ]);
+
+    const indices =
+      settled[0].status === "fulfilled" ? settled[0].value : [];
+    const breadth =
+      settled[1].status === "fulfilled"
+        ? settled[1].value
+        : { buckets: [], up: 0, down: 0, flat: 0, raw: {} };
+    const boards =
+      settled[2].status === "fulfilled" ? settled[2].value : [];
+    const flows =
+      settled[3].status === "fulfilled" ? settled[3].value : [];
+    const news =
+      settled[4].status === "fulfilled" ? settled[4].value : [];
+
+    const errors = settled
+      .map((s, i) =>
+        s.status === "rejected"
+          ? { part: ["indices", "breadth", "boards", "flows", "news"][i], error: String(s.reason) }
+          : null,
+      )
+      .filter(Boolean);
+
+    const sentiment = buildSentimentSummary({
+      indices,
+      breadth: { up: breadth.up, down: breadth.down, flat: breadth.flat },
+      boards,
+    });
+
+    const payload = {
+      updatedAt: new Date().toISOString(),
+      indices,
+      breadth,
+      boards,
+      flows,
+      news,
+      sentiment,
+      errors,
+      disclaimer: "数据来自公开延迟接口，仅供学习研究，不构成投资建议。",
+    };
+
+    if (indices.length || boards.length) {
+      await c.env.QUOTES.put(cacheKey, JSON.stringify(payload), {
+        expirationTtl: 60,
+      });
+    }
+
+    return c.json({ ...payload, source: "eastmoney" });
+  } catch (e) {
+    return c.json(
+      { error: "dashboard_failed", message: e instanceof Error ? e.message : String(e) },
+      500,
+    );
+  }
+});
+
+app.get("/api/v1/cn/indices", async (c) => {
+  try {
+    const indices = await fetchIndexQuotes();
+    return c.json({ items: indices });
+  } catch (e) {
+    return c.json(
+      { error: "indices_failed", message: e instanceof Error ? e.message : String(e) },
+      500,
+    );
+  }
+});
+
+app.get("/api/v1/cn/intraday", async (c) => {
+  try {
+    const secid = c.req.query("secid") || INDEX_DEFS[0].secid;
+    const cacheKey = `cn:intraday:${secid}`;
+    const cached = await c.env.QUOTES.get(cacheKey, "json");
+    if (cached) return c.json({ ...cached, source: "kv" });
+    const data = await fetchIndexIntraday(secid);
+    await c.env.QUOTES.put(cacheKey, JSON.stringify(data), { expirationTtl: 60 });
+    return c.json({ ...data, source: "eastmoney" });
+  } catch (e) {
+    return c.json(
+      { error: "intraday_failed", message: e instanceof Error ? e.message : String(e) },
+      500,
+    );
+  }
+});
+
+app.get("/api/v1/cn/boards", async (c) => {
+  const items = await fetchHotBoards(Number(c.req.query("limit") || 5));
+  return c.json({ items });
+});
+
+app.get("/api/v1/cn/news", async (c) => {
+  const items = await fetchFlashNews(Number(c.req.query("limit") || 20));
+  return c.json({ items });
+});
 
 app.get("/api/v1/instruments", async (c) => {
   const rows = await c.env.DB.prepare(
