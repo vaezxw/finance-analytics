@@ -130,6 +130,12 @@ export default function HomePage() {
         <p style={{ letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.7, margin: 0 }}>
           finance-analytics
         </p>
+        <nav style={{ display: "flex", gap: "1rem", margin: "0.75rem 0", fontSize: 14 }}>
+          <span style={{ opacity: 0.5 }}>看板</span>
+          <a href="/watchlist" style={{ color: "#9fd0b3" }}>
+            自选盯盘
+          </a>
+        </nav>
         <h1 style={{ fontSize: "clamp(2rem, 5vw, 3rem)", margin: "0.4rem 0 0.6rem" }}>
           基金与全球股票看板
         </h1>

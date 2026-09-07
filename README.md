@@ -7,8 +7,9 @@
 | 服务 | URL |
 |------|-----|
 | Web | https://finance-analytics-web.2148983461.workers.dev |
+| 自选盯盘 | https://finance-analytics-web.2148983461.workers.dev/watchlist |
 | API | https://finance-analytics-api.2148983461.workers.dev |
-| Realtime | https://finance-analytics-realtime.2148983461.workers.dev |
+| Realtime WS | `wss://finance-analytics-realtime.2148983461.workers.dev/ws?room=demo` |
 
 手机浏览器直接打开 Web 地址即可（无需本机开机）。
 

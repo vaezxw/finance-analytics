@@ -16,5 +16,11 @@
       "tag": "v1",
       "new_sqlite_classes": ["WatchlistRoom"]
     }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "QUOTES",
+      "id": "32842d0978954a07b84f7028c53a8464"
+    }
   ]
 }

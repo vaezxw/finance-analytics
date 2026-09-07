@@ -122,27 +122,168 @@ app.post("/api/v1/admin/seed", async (c) => {
   return c.json({ ok: true, seeded: SEED_INSTRUMENTS.length });
 });
 
+app.get("/api/v1/watchlist", async (c) => {
+  const userId = c.req.query("user_id") || "demo";
+  await seedInstruments(c.env.DB);
+
+  let rows = await c.env.DB.prepare(
+    `SELECT w.id as watchlist_id, i.id, i.symbol, i.name, i.asset_class, i.market, i.currency
+     FROM watchlist_items w
+     JOIN instruments i ON i.id = w.instrument_id
+     WHERE w.user_id = ?
+     ORDER BY w.created_at ASC`,
+  )
+    .bind(userId)
+    .all();
+
+  if (!rows.results?.length) {
+    for (const symbol of ["SPY", "QQQ", "AAPL"]) {
+      const instrument = SEED_INSTRUMENTS.find((i) => i.symbol === symbol)!;
+      await c.env.DB.prepare(
+        `INSERT OR IGNORE INTO watchlist_items (id, user_id, instrument_id) VALUES (?, ?, ?)`,
+      )
+        .bind(`${userId}:${instrument.id}`, userId, instrument.id)
+        .run();
+    }
+    rows = await c.env.DB.prepare(
+      `SELECT w.id as watchlist_id, i.id, i.symbol, i.name, i.asset_class, i.market, i.currency
+       FROM watchlist_items w
+       JOIN instruments i ON i.id = w.instrument_id
+       WHERE w.user_id = ?
+       ORDER BY w.created_at ASC`,
+    )
+      .bind(userId)
+      .all();
+  }
+
+  const items = [];
+  for (const row of rows.results ?? []) {
+    const symbol = String((row as any).symbol);
+    const quote = await getQuoteCached(c, symbol);
+    items.push({ ...row, quote });
+  }
+  return c.json({ user_id: userId, items });
+});
+
+app.post("/api/v1/watchlist", async (c) => {
+  const userId = c.req.query("user_id") || "demo";
+  const body = await c.req.json<{ symbol?: string }>().catch(() => ({}));
+  const symbol = String(body.symbol || "").toUpperCase().trim();
+  if (!symbol) return c.json({ error: "symbol_required" }, 400);
+
+  await seedInstruments(c.env.DB);
+  let instrument = await c.env.DB.prepare(
+    `SELECT id, symbol, name, asset_class, market, currency FROM instruments WHERE symbol = ? LIMIT 1`,
+  )
+    .bind(symbol)
+    .first<Instrument>();
+
+  if (!instrument) {
+    const seed = SEED_INSTRUMENTS.find((i) => i.symbol === symbol);
+    const id = seed?.id ?? `dyn-${symbol.toLowerCase()}`;
+    const name = seed?.name ?? symbol;
+    const assetClass = seed?.asset_class ?? "stock";
+    const market = seed?.market ?? "US";
+    const currency = seed?.currency ?? "USD";
+    await c.env.DB.prepare(
+      `INSERT OR IGNORE INTO instruments (id, symbol, name, asset_class, market, currency)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(id, symbol, name, assetClass, market, currency)
+      .run();
+    instrument = {
+      id,
+      symbol,
+      name,
+      asset_class: assetClass,
+      market,
+      currency,
+    };
+  }
+
+  const watchId = `${userId}:${instrument.id}`;
+  await c.env.DB.prepare(
+    `INSERT OR IGNORE INTO watchlist_items (id, user_id, instrument_id) VALUES (?, ?, ?)`,
+  )
+    .bind(watchId, userId, instrument.id)
+    .run();
+
+  const quote = await getQuoteCached(c, symbol);
+  return c.json({ ok: true, item: { ...instrument, quote } });
+});
+
+app.delete("/api/v1/watchlist/:symbol", async (c) => {
+  const userId = c.req.query("user_id") || "demo";
+  const symbol = c.req.param("symbol").toUpperCase();
+  const instrument = await c.env.DB.prepare(
+    `SELECT id FROM instruments WHERE symbol = ? LIMIT 1`,
+  )
+    .bind(symbol)
+    .first<{ id: string }>();
+  if (!instrument) return c.json({ ok: true });
+
+  await c.env.DB.prepare(
+    `DELETE FROM watchlist_items WHERE user_id = ? AND instrument_id = ?`,
+  )
+    .bind(userId, instrument.id)
+    .run();
+  return c.json({ ok: true });
+});
+
+app.get("/api/v1/quotes", async (c) => {
+  const raw = c.req.query("symbols") || "";
+  const symbols = raw
+    .split(",")
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean)
+    .slice(0, 30);
+  const quotes: Record<string, YahooQuote> = {};
+  for (const symbol of symbols) {
+    const q = await getQuoteCached(c, symbol);
+    if (q) quotes[symbol] = q;
+  }
+  return c.json({ quotes });
+});
+
 export default {
   fetch: app.fetch,
   async scheduled(
-    _controller: ScheduledController,
+    controller: ScheduledController,
     env: Env,
     _ctx: ExecutionContext,
   ) {
     await seedInstruments(env.DB);
-    const symbols = SEED_INSTRUMENTS.map((i) => i.symbol);
+    const cron = controller.cron;
+    const watchRows = await env.DB.prepare(
+      `SELECT DISTINCT i.symbol
+       FROM watchlist_items w
+       JOIN instruments i ON i.id = w.instrument_id`,
+    ).all<{ symbol: string }>();
+    const symbols = Array.from(
+      new Set([
+        ...SEED_INSTRUMENTS.map((i) => i.symbol),
+        ...((watchRows.results ?? []).map((r) => r.symbol) as string[]),
+      ]),
+    );
+
     for (const symbol of symbols) {
-      const candles = await fetchYahooDaily(symbol, "6mo");
-      if (candles.length) {
-        await env.QUOTES.put(`ohlcv:${symbol}:6mo`, JSON.stringify(candles), {
-          expirationTtl: 60 * 60 * 12,
-        });
-      }
       const quote = await fetchYahooQuote(symbol);
       if (quote) {
         await env.QUOTES.put(`quote:${symbol}`, JSON.stringify(quote), {
-          expirationTtl: 60 * 30,
+          expirationTtl: 60 * 10,
         });
+      }
+    }
+
+    // nightly deeper refresh for OHLCV
+    if (cron === "0 2 * * *") {
+      for (const symbol of symbols) {
+        const candles = await fetchYahooDaily(symbol, "6mo");
+        if (candles.length) {
+          await env.QUOTES.put(`ohlcv:${symbol}:6mo`, JSON.stringify(candles), {
+            expirationTtl: 60 * 60 * 12,
+          });
+        }
       }
     }
   },
