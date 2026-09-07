@@ -41,8 +41,10 @@ migrations/     # D1 schema
 | Worker | 根目录 | 构建命令 | 部署命令 |
 |--------|--------|----------|----------|
 | finance-analytics-web | `apps/web` | `npx opennextjs-cloudflare build` | `npx opennextjs-cloudflare deploy` |
-| finance-analytics-api | `apps/api` | _(留空)_ | `npx wrangler deploy` |
-| finance-analytics-realtime | `apps/realtime` | _(留空)_ | `npx wrangler deploy` |
+| finance-analytics-api | `apps/api` | **必须留空** | `npx wrangler deploy` |
+| finance-analytics-realtime | `apps/realtime` | **必须留空** | `npx wrangler deploy` |
+
+重要：api / realtime **不要**把构建命令写成 `npm install`。Cloudflare 已自动执行 `npm ci`，再跑一次 `npm install` 容易因 peer 依赖冲突失败。
 
 各应用自带独立 `package-lock.json`，不要用仓库根目录作为 Root directory。
 
